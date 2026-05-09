@@ -38,7 +38,7 @@ python app.py
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `PORT` | 服务端口 | 9023 |
-| `APP_PASSWORD` | 登录密码 | 1111iran |
+| `APP_PASSWORD` | 登录密码 | 默认值见代码 |
 | `SECRET_KEY` | Session 密钥 | 随机值（生产环境建议修改） |
 
 ## 使用说明
