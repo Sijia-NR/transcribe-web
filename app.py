@@ -25,7 +25,7 @@ from docx.shared import Pt
 # === 配置 ===
 BASE_URL = "https://office-api-ist-dx.iflyaisol.com"
 SECRET_KEY = os.environ.get("SECRET_KEY", "transcribe-web-secret-change-me")
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "admin123")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "1111iran")
 PORT = int(os.environ.get("PORT", 9023))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
