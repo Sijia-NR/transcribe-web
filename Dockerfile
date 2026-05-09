@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffprobe \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -16,6 +16,6 @@ RUN mkdir -p uploads results
 EXPOSE 9023
 
 ENV PORT=9023
-ENV APP_PASSWORD=admin123
+ENV APP_PASSWORD=1111iran
 
 CMD ["python", "app.py"]
