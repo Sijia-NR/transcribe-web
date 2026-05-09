@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>录音转写</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50: '#eef8f3', 100: '#d5ede2', 200: '#a8dbc6', 300: '#6dc4a3', 400: '#3aad83', 500: '#00965E', 600: '#007a4d', 700: '#005e3b', 800: '#00432a', 900: '#002919' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; }
+        .drag-area { border: 2px dashed #d1d5db; transition: all 0.25s ease; }
+        .drag-area:hover { border-color: #00965E; background: #eef8f3; }
+        .drag-area.dragover { border-color: #007a4d; background: #d5ede2; }
+        .drag-area.has-file { border-style: solid; border-color: #00965E; background: #eef8f3; }
+        .help-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .help-panel.open { max-height: 400px; }
+        input:focus, select:focus { box-shadow: 0 0 0 3px rgba(0,150,94,0.1); border-color: #00965E; }
+        .upload-btn { transition: all 0.2s ease; }
+        .upload-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,150,94,0.3); }
+        .upload-btn:active:not(:disabled) { transform: translateY(0); }
+        @media (max-width: 768px) {
+            .main-grid { grid-template-columns: 1fr !important; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- 导航 -->
+    <nav class="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
+        <div class="max-w-4xl mx-auto px-5 h-12 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <div class="w-6 h-6 rounded-md bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    </svg>
+                </div>
+                <span class="text-sm font-semibold text-gray-800">录音转写</span>
+            </div>
+            <div class="flex gap-4 text-[12px]">
+                <a href="/" class="text-brand-600 font-medium">上传</a>
+                <a href="/history" class="text-gray-400 hover:text-gray-600 transition-colors">历史</a>
+                <a href="/logout" class="text-gray-400 hover:text-gray-600 transition-colors">退出</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主内容 - 左右双栏 -->
+    <div class="max-w-4xl mx-auto px-5 py-6">
+        <div class="main-grid grid grid-cols-2 gap-4" style="grid-template-columns: 5fr 7fr;">
+
+            <!-- 左栏：服务商配置 -->
+            <div>
+                <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h2 class="text-[12px] font-semibold text-gray-500 uppercase tracking-wider">服务商</h2>
+                        <button onclick="toggleHelp()" class="text-[11px] text-brand-600 hover:text-brand-700 font-medium transition-colors">
+                            如何获取
+                        </button>
+                    </div>
+
+                    <!-- 帮助面板 -->
+                    <div id="helpPanel" class="help-panel mb-3">
+                        <div id="helpContent" class="bg-brand-50 border border-brand-100 rounded-lg p-3 text-[12px] text-gray-600 leading-relaxed space-y-1.5"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <select id="provider" onchange="onProviderChange()"
+                                class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] text-gray-700 outline-none transition-all appearance-none cursor-pointer font-medium"
+                                style="background-image: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23999%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>'); background-repeat: no-repeat; background-position: right 10px center;">
+                            <option value="">选择服务商</option>
+                            <option value="xfyun" selected>讯飞开放平台</option>
+                        </select>
+                    </div>
+
+                    <div id="xfyunFields" class="space-y-2.5">
+                        <div>
+                            <label class="block text-[11px] text-gray-400 mb-1 font-medium">APP ID</label>
+                            <input type="text" id="appId" placeholder="请输入 APP ID"
+                                   class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] outline-none transition-all placeholder:text-gray-300">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-gray-400 mb-1 font-medium">API Key</label>
+                            <input type="text" id="apiKey" placeholder="请输入 API Key"
+                                   class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] outline-none transition-all placeholder:text-gray-300">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-gray-400 mb-1 font-medium">API Secret</label>
+                            <input type="password" id="apiSecret" placeholder="请输入 API Secret"
+                                   class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] outline-none transition-all placeholder:text-gray-300">
+                        </div>
+                    </div>
+
+                    <label class="flex items-center gap-1.5 mt-3 text-[11px] text-gray-400 cursor-pointer select-none">
+                        <input type="checkbox" id="saveCreds" checked class="rounded border-gray-300 text-brand-600 focus:ring-brand-200 w-3 h-3">
+                        记住配置
+                    </label>
+                </div>
+            </div>
+
+            <!-- 右栏：上传 + 进度 -->
+            <div>
+                <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                    <h2 class="text-[12px] font-semibold text-gray-500 uppercase tracking-wider mb-3">上传音频</h2>
+                    <div id="dropArea" class="drag-area rounded-xl p-8 text-center cursor-pointer bg-gray-50/50"
+                         onclick="document.getElementById('fileInput').click()">
+                        <input type="file" id="fileInput" class="hidden"
+                               accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.opus,.amr,.wma">
+                        <div class="mb-2">
+                            <svg class="mx-auto text-gray-300" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                        </div>
+                        <p id="fileName" class="text-[13px] text-gray-800 font-medium hidden mb-0.5"></p>
+                        <p id="fileHint" class="text-[12px] text-gray-400">点击选择或拖拽音频文件</p>
+                        <p class="text-[10px] text-gray-300 mt-1.5">mp3 / wav / m4a / ogg / flac 等，最大 500MB</p>
+                    </div>
+                    <button id="uploadBtn" onclick="startUpload()" disabled
+                            class="upload-btn w-full mt-3 bg-gradient-to-r from-brand-600 to-brand-500 text-white py-2.5 rounded-xl text-[13px] font-medium disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed disabled:shadow-none">
+                        开始转写
+                    </button>
+                </div>
+
+                <!-- 进度（上传后展开） -->
+                <div id="progressArea" class="hidden mt-4">
+                    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                        <div class="flex items-center gap-2.5 mb-3">
+                            <div class="w-4 h-4 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" id="spinner"></div>
+                            <div class="flex-1">
+                                <p id="statusText" class="text-[13px] text-gray-700">上传中...</p>
+                                <p id="elapsedText" class="text-[11px] text-gray-400 mt-0.5"></p>
+                            </div>
+                        </div>
+                        <div class="bg-gray-100 rounded-full h-1">
+                            <div id="progressFill" class="bg-gradient-to-r from-brand-500 to-brand-400 h-1 rounded-full transition-all duration-700" style="width: 0%"></div>
+                        </div>
+                        <div id="resultLink" class="hidden mt-3">
+                            <a id="resultUrl" href="#"
+                               class="block text-center bg-gradient-to-r from-brand-600 to-brand-500 text-white py-2.5 rounded-xl text-[13px] font-medium shadow-lg shadow-brand-600/20 hover:shadow-brand-600/30 transition-all">
+                                查看转写结果
+                            </a>
+                        </div>
+                        <div id="errorArea" class="hidden mt-3 bg-red-50 border border-red-100 text-red-600 px-3 py-2 rounded-lg text-[12px]"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const PROVIDERS = {
+            xfyun: {
+                name: '讯飞开放平台',
+                fields: 'xfyunFields',
+                helpSteps: [
+                    '前往 <a href="https://console.xfyun.cn/app/myapp" target="_blank" class="text-brand-700 underline underline-offset-1 decoration-brand-300">讯飞控制台</a> 创建应用',
+                    '开通 <a href="https://console.xfyun.cn/services/new_lfasr" target="_blank" class="text-brand-700 underline underline-offset-1 decoration-brand-300">录音文件转写</a> 服务',
+                    '获取 APPID、APIKey、APISecret',
+                    '新用户可免费使用 5 小时转写额度',
+                ],
+            },
+        };
+
+        function onProviderChange() {
+            const provider = document.getElementById('provider').value;
+            // 隐藏所有服务商字段
+            document.querySelectorAll('[id$="Fields"]').forEach(el => el.style.display = 'none');
+            // 显示选中的服务商字段
+            const cfg = PROVIDERS[provider];
+            if (cfg && cfg.fields) {
+                const fieldsEl = document.getElementById(cfg.fields);
+                if (fieldsEl) fieldsEl.style.display = '';
+            }
+            // 更新帮助面板内容
+            updateHelpContent(provider);
+        }
+
+        function updateHelpContent(provider) {
+            const container = document.getElementById('helpContent');
+            const cfg = PROVIDERS[provider];
+            if (!cfg || !cfg.helpSteps) {
+                container.innerHTML = '<p class="text-gray-400">请先选择服务商</p>';
+                return;
+            }
+            container.innerHTML = cfg.helpSteps.map((step, i) => `
+                <div class="flex gap-1.5">
+                    <span class="flex-shrink-0 w-4 h-4 rounded-full bg-brand-100 text-brand-700 text-[10px] font-semibold flex items-center justify-center">${i + 1}</span>
+                    <span>${step}</span>
+                </div>
+            `).join('');
+        }
+
+        // 初始化
+        onProviderChange();
+
+        const KEYS = { appId: 'xf_app_id', apiKey: 'xf_api_key', apiSecret: 'xf_api_secret' };
+
+        function loadCreds() {
+            for (const [id, key] of Object.entries(KEYS)) {
+                const val = localStorage.getItem(key);
+                if (val) document.getElementById(id).value = val;
+            }
+        }
+        function saveCreds() {
+            if (document.getElementById('saveCreds').checked) {
+                for (const [id, key] of Object.entries(KEYS)) {
+                    localStorage.setItem(key, document.getElementById(id).value);
+                }
+            } else {
+                Object.values(KEYS).forEach(k => localStorage.removeItem(k));
+            }
+        }
+        loadCreds();
+
+        function toggleHelp() {
+            document.getElementById('helpPanel').classList.toggle('open');
+        }
+
+        const fileInput = document.getElementById('fileInput');
+        const dropArea = document.getElementById('dropArea');
+        let selectedFile = null;
+
+        fileInput.addEventListener('change', e => {
+            if (e.target.files[0]) selectFile(e.target.files[0]);
+        });
+        dropArea.addEventListener('dragover', e => { e.preventDefault(); dropArea.classList.add('dragover'); });
+        dropArea.addEventListener('dragleave', () => dropArea.classList.remove('dragover'));
+        dropArea.addEventListener('drop', e => {
+            e.preventDefault();
+            dropArea.classList.remove('dragover');
+            if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
+        });
+
+        function selectFile(file) {
+            selectedFile = file;
+            const nameEl = document.getElementById('fileName');
+            const hintEl = document.getElementById('fileHint');
+            nameEl.textContent = file.name;
+            nameEl.classList.remove('hidden');
+            hintEl.textContent = (file.size / 1024 / 1024).toFixed(1) + ' MB';
+            dropArea.classList.add('has-file');
+            document.getElementById('uploadBtn').disabled = false;
+        }
+
+        let pollTimer = null;
+
+        async function startUpload() {
+            const appId = document.getElementById('appId').value.trim();
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const apiSecret = document.getElementById('apiSecret').value.trim();
+
+            if (!appId || !apiKey || !apiSecret) {
+                alert('请填写完整的服务商认证信息');
+                return;
+            }
+            if (!selectedFile) {
+                alert('请选择音频文件');
+                return;
+            }
+
+            saveCreds();
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('app_id', appId);
+            formData.append('api_key', apiKey);
+            formData.append('api_secret', apiSecret);
+
+            document.getElementById('uploadBtn').disabled = true;
+            document.getElementById('progressArea').classList.remove('hidden');
+            document.getElementById('resultLink').classList.add('hidden');
+            document.getElementById('errorArea').classList.add('hidden');
+            document.getElementById('statusText').textContent = '上传中...';
+
+            try {
+                const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+                const data = await resp.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    document.getElementById('uploadBtn').disabled = false;
+                    return;
+                }
+
+                document.getElementById('statusText').textContent = '已上传，转写处理中...';
+                // 记录到 localStorage
+                const tasks = JSON.parse(localStorage.getItem('transcribe_tasks') || '[]');
+                tasks.unshift({ tid: data.task_id, name: selectedFile.name, time: new Date().toLocaleString() });
+                localStorage.setItem('transcribe_tasks', JSON.stringify(tasks));
+                pollStatus(data.task_id, data.estimate_time || 300);
+            } catch (e) {
+                showError('上传失败: ' + e.message);
+                document.getElementById('uploadBtn').disabled = false;
+            }
+        }
+
+        function pollStatus(taskId, estimateTime) {
+            let startTime = Date.now();
+            pollTimer = setInterval(async () => {
+                try {
+                    const resp = await fetch('/api/status/' + taskId);
+                    const data = await resp.json();
+
+                    if (data.error) { showError(data.error); clearInterval(pollTimer); return; }
+
+                    const elapsed = Math.round((Date.now() - startTime) / 1000);
+                    document.getElementById('statusText').textContent = data.status_text || '处理中...';
+                    document.getElementById('elapsedText').textContent = `${elapsed}s / 预计 ${Math.round(estimateTime/1000)}s`;
+
+                    const pct = Math.min(95, (elapsed / (estimateTime / 1000)) * 100);
+                    document.getElementById('progressFill').style.width = pct + '%';
+
+                    if (data.status === 'done') {
+                        clearInterval(pollTimer);
+                        document.getElementById('progressFill').style.width = '100%';
+                        document.getElementById('spinner').style.display = 'none';
+                        document.getElementById('statusText').textContent = '转写完成';
+                        document.getElementById('resultLink').classList.remove('hidden');
+                        document.getElementById('resultUrl').href = '/result/' + taskId;
+                    } else if (data.status === 'failed') {
+                        clearInterval(pollTimer);
+                        showError(data.error || '转写失败');
+                    }
+                } catch (e) {}
+            }, 3000);
+        }
+
+        function showError(msg) {
+            document.getElementById('errorArea').textContent = msg;
+            document.getElementById('errorArea').classList.remove('hidden');
+            document.getElementById('spinner').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

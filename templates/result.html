@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>录音转写</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50: '#eef8f3', 100: '#d5ede2', 200: '#a8dbc6', 300: '#6dc4a3', 400: '#3aad83', 500: '#00965E', 600: '#007a4d', 700: '#005e3b', 800: '#00432a', 900: '#002919' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; }
+        input:focus { box-shadow: 0 0 0 3px rgba(0,150,94,0.1); border-color: #00965E; }
+        .card { transition: box-shadow 0.2s ease; }
+        .card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+        .export-btn { transition: all 0.15s ease; }
+        .export-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- 导航 -->
+    <nav class="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
+        <div class="max-w-3xl mx-auto px-5 h-14 flex justify-between items-center">
+            <div class="flex items-center gap-2.5">
+                <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center shadow-sm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                </div>
+                <span class="text-[15px] font-semibold text-gray-800">录音转写</span>
+            </div>
+            <div class="flex gap-5 text-[13px]">
+                <a href="/" class="text-gray-400 hover:text-gray-600 transition-colors">上传</a>
+                <a href="/history" class="text-gray-400 hover:text-gray-600 transition-colors">历史</a>
+                <a href="/logout" class="text-gray-400 hover:text-gray-600 transition-colors">退出</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-2xl mx-auto px-5 py-8">
+        <!-- 文件信息 -->
+        <div class="card bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h2 class="text-[15px] font-semibold text-gray-800">{{ task.filename }}</h2>
+                    <p class="text-[12px] text-gray-400 mt-1">{{ task.created_at if task.created_at else '' }} · {{ task.segments|length }} 段</p>
+                </div>
+                <a href="/" class="text-[12px] text-brand-600 hover:text-brand-700 font-medium transition-colors">上传新文件</a>
+            </div>
+            {% if single_speaker %}
+            <div class="mt-3 bg-amber-50 border border-amber-200 text-amber-700 px-3 py-2 rounded-lg text-[12px] leading-relaxed">
+                只识别到 1 位说话人。如果实际有多人对话，可能是因为说话人之间停顿较短，导致语音被当作同一个人。建议说话人间留出明显停顿后再试。
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- 说话人编辑 -->
+        <div class="card bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
+            <h3 class="text-[12px] font-semibold text-gray-500 uppercase tracking-wider mb-3">说话人名称</h3>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {% for sp in speakers %}
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0"></span>
+                    <input type="text" data-speaker="{{ sp }}" class="speaker-input flex-1 px-2.5 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-[13px] outline-none transition-all placeholder:text-gray-300" placeholder="说话人{{ sp }}">
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- 导出 -->
+        <div class="flex gap-3 mb-4">
+            <button onclick="doExport('txt')" class="export-btn flex-1 bg-white border border-gray-200 text-gray-600 py-2.5 rounded-xl text-[13px] font-medium hover:bg-gray-50">导出 TXT</button>
+            <button onclick="doExport('docx')" class="export-btn flex-1 bg-white border border-gray-200 text-gray-600 py-2.5 rounded-xl text-[13px] font-medium hover:bg-gray-50">导出 Word</button>
+        </div>
+
+        <!-- 转写内容 -->
+        <div class="card bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <div id="transcript">
+                {% for rl, text in task.segments %}
+                <div class="mb-4 last:mb-0 flex gap-3">
+                    <span class="speaker-label flex-shrink-0 text-[12px] font-semibold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-md mt-0.5" data-rl="{{ rl }}">说话人{{ rl }}</span>
+                    <span class="text-[14px] text-gray-700 leading-relaxed">{{ text }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const taskId = "{{ task_id }}";
+
+        document.querySelectorAll('.speaker-input').forEach(input => {
+            input.addEventListener('input', () => {
+                const rl = input.dataset.speaker;
+                const name = input.value.trim();
+                document.querySelectorAll(`.speaker-label[data-rl="${rl}"]`).forEach(label => {
+                    label.textContent = name || `说话人${rl}`;
+                });
+            });
+        });
+
+        function doExport(format) {
+            const params = new URLSearchParams();
+            document.querySelectorAll('.speaker-input').forEach(input => {
+                const name = input.value.trim();
+                if (name) {
+                    params.set('speaker_' + input.dataset.speaker, name);
+                }
+            });
+            window.location.href = `/api/export/${taskId}/${format}?${params.toString()}`;
+        }
+    </script>
+</body>
+</html>
