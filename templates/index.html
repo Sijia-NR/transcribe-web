@@ -193,10 +193,10 @@
             },
         };
 
-        function onProviderChange() {
+        function onProviderChange(skipSave) {
             const provider = document.getElementById('provider').value;
-            // 保存当前凭证，加载新服务商的凭证
-            saveCreds();
+            // 切换服务商时保存当前凭证，加载新服务商的凭证
+            if (!skipSave) saveCreds();
             loadCreds();
             // 隐藏所有服务商字段
             document.querySelectorAll('[id$="Fields"]').forEach(el => el.style.display = 'none');
@@ -225,8 +225,8 @@
             `).join('');
         }
 
-        // 初始化
-        onProviderChange();
+        // 初始化：跳过 saveCreds 避免空值覆盖已保存的凭证
+        onProviderChange(true);
 
         function getKeys() {
             const provider = document.getElementById('provider').value;
@@ -250,7 +250,6 @@
                 Object.values(keys).forEach(k => localStorage.removeItem(k));
             }
         }
-        loadCreds();
 
         function toggleHelp() {
             document.getElementById('helpPanel').classList.toggle('open');
