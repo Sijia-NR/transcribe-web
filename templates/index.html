@@ -80,7 +80,8 @@
                                 class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] text-gray-700 outline-none transition-all appearance-none cursor-pointer font-medium"
                                 style="background-image: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23999%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>'); background-repeat: no-repeat; background-position: right 10px center;">
                             <option value="">选择服务商</option>
-                            <option value="xfyun" selected>讯飞开放平台</option>
+                            <option value="xfyun" selected>讯飞录音文件转写</option>
+                            <option value="xfyun_speed">讯飞极速版转写</option>
                         </select>
                     </div>
 
@@ -169,8 +170,9 @@
     <script>
         const PROVIDERS = {
             xfyun: {
-                name: '讯飞开放平台',
+                name: '讯飞录音文件转写',
                 fields: 'xfyunFields',
+                credKeys: { appId: 'xf_app_id', apiKey: 'xf_api_key', apiSecret: 'xf_api_secret' },
                 helpSteps: [
                     '前往 <a href="https://console.xfyun.cn/app/myapp" target="_blank" class="text-brand-700 underline underline-offset-1 decoration-brand-300">讯飞控制台</a> 创建应用',
                     '开通 <a href="https://console.xfyun.cn/services/new_lfasr" target="_blank" class="text-brand-700 underline underline-offset-1 decoration-brand-300">录音文件转写</a> 服务',
@@ -178,10 +180,24 @@
                     '新用户可免费使用 5 小时转写额度',
                 ],
             },
+            xfyun_speed: {
+                name: '讯飞极速版转写',
+                fields: 'xfyunFields',
+                credKeys: { appId: 'xfs_app_id', apiKey: 'xfs_api_key', apiSecret: 'xfs_api_secret' },
+                helpSteps: [
+                    '前往 <a href="https://console.xfyun.cn/app/myapp" target="_blank" class="text-brand-700 underline underline-offset-1 decoration-brand-300">讯飞控制台</a> 创建应用',
+                    '开通 <a href="https://console.xfyun.cn/services/speedTranscription" target="_blank" class="text-brand-700 underline underline-offset-1 decoration-brand-300">极速录音转写</a> 服务',
+                    '获取 APPID、APIKey、APISecret',
+                    '转写速度约 1 分钟/小时音频，支持中英 + 202 种方言',
+                ],
+            },
         };
 
         function onProviderChange() {
             const provider = document.getElementById('provider').value;
+            // 保存当前凭证，加载新服务商的凭证
+            saveCreds();
+            loadCreds();
             // 隐藏所有服务商字段
             document.querySelectorAll('[id$="Fields"]').forEach(el => el.style.display = 'none');
             // 显示选中的服务商字段
@@ -212,21 +228,26 @@
         // 初始化
         onProviderChange();
 
-        const KEYS = { appId: 'xf_app_id', apiKey: 'xf_api_key', apiSecret: 'xf_api_secret' };
+        function getKeys() {
+            const provider = document.getElementById('provider').value;
+            return PROVIDERS[provider]?.credKeys || { appId: 'xf_app_id', apiKey: 'xf_api_key', apiSecret: 'xf_api_secret' };
+        }
 
         function loadCreds() {
-            for (const [id, key] of Object.entries(KEYS)) {
+            const keys = getKeys();
+            for (const [id, key] of Object.entries(keys)) {
                 const val = localStorage.getItem(key);
-                if (val) document.getElementById(id).value = val;
+                document.getElementById(id).value = val || '';
             }
         }
         function saveCreds() {
+            const keys = getKeys();
             if (document.getElementById('saveCreds').checked) {
-                for (const [id, key] of Object.entries(KEYS)) {
+                for (const [id, key] of Object.entries(keys)) {
                     localStorage.setItem(key, document.getElementById(id).value);
                 }
             } else {
-                Object.values(KEYS).forEach(k => localStorage.removeItem(k));
+                Object.values(keys).forEach(k => localStorage.removeItem(k));
             }
         }
         loadCreds();
@@ -296,6 +317,7 @@
 
             const formData = new FormData();
             formData.append('file', selectedFile);
+            formData.append('provider', document.getElementById('provider').value || 'xfyun');
             formData.append('app_id', appId);
             formData.append('api_key', apiKey);
             formData.append('api_secret', apiSecret);
@@ -321,7 +343,7 @@
                 const tasks = JSON.parse(localStorage.getItem('transcribe_tasks') || '[]');
                 tasks.unshift({ tid: data.task_id, name: selectedFile.name, time: new Date().toLocaleString() });
                 localStorage.setItem('transcribe_tasks', JSON.stringify(tasks));
-                pollStatus(data.task_id, data.estimate_time || 300);
+                pollStatus(data.task_id, data.estimate_time || 300000);
             } catch (e) {
                 showError('上传失败: ' + e.message);
                 document.getElementById('uploadBtn').disabled = false;

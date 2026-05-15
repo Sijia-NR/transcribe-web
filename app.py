@@ -219,6 +219,181 @@ def parse_result(content):
     return merged
 
 
+# ========== 讯飞极速版 API ==========
+
+OST_UPLOAD_URL = "https://upload-ost-api.xfyun.cn/file/upload"
+OST_CREATE_URL = "https://ost-api.xfyun.cn/v2/ost/pro_create"
+OST_QUERY_URL = "https://ost-api.xfyun.cn/v2/ost/query"
+
+
+def ost_build_auth(url, method, api_key, api_secret, body_bytes, use_empty_digest=False):
+    """构建极速版 HMAC-SHA256 鉴权
+
+    注意：文件上传接口的 digest 需要使用空字符串计算（与讯飞官方 demo 一致），
+    创建/查询任务接口则使用实际 body 计算 digest。
+    """
+    from email.utils import formatdate
+
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    date = formatdate(usegmt=True)
+    request_line = f"{method.upper()} {parsed.path} HTTP/1.1"
+
+    if use_empty_digest:
+        # 文件上传接口：digest 使用空字符串（官方 demo 行为）
+        body_digest = hashlib.sha256(b"").digest()
+    else:
+        body_digest = hashlib.sha256(body_bytes).digest()
+    digest = "SHA-256=" + base64.b64encode(body_digest).decode("utf-8")
+
+    signature_origin = (
+        f"host: {host}\ndate: {date}\n"
+        f"{request_line}\ndigest: {digest}"
+    )
+    signature_hmac = hmac.new(
+        api_secret.encode("utf-8"),
+        signature_origin.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    signature = base64.b64encode(signature_hmac).decode("utf-8")
+
+    authorization = (
+        f'api_key="{api_key}", algorithm="hmac-sha256", '
+        f'headers="host date request-line digest", signature="{signature}"'
+    )
+    return {
+        "host": host,
+        "date": date,
+        "digest": digest,
+        "authorization": authorization,
+    }
+
+
+def ost_upload_file(app_id, api_key, api_secret, filepath):
+    """极速版：上传音频文件，返回 (audio_url, 格式)"""
+    ext = os.path.splitext(filepath)[1].lower().lstrip(".")
+    if ext not in ("wav", "mp3", "pcm"):
+        import subprocess
+
+        wav_path = filepath + ".wav"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", filepath,
+                "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", wav_path,
+            ],
+            capture_output=True,
+        )
+        if os.path.exists(wav_path):
+            filepath = wav_path
+            ext = "wav"
+
+    request_id = str(uuid.uuid4())
+    file_name = os.path.basename(filepath)
+
+    with open(filepath, "rb") as f:
+        file_content = f.read()
+
+    boundary = uuid.uuid4().hex
+    body = b""
+    body += (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="request_id"'
+        f"\r\n\r\n{request_id}\r\n"
+    ).encode()
+    body += (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="app_id"'
+        f"\r\n\r\n{app_id}\r\n"
+    ).encode()
+    body += (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="data"; '
+        f'filename="{file_name}"\r\nContent-Type: application/octet-stream\r\n\r\n'
+    ).encode()
+    body += file_content
+    body += f"\r\n--{boundary}--\r\n".encode()
+
+    headers = ost_build_auth(OST_UPLOAD_URL, "POST", api_key, api_secret, body, use_empty_digest=True)
+    headers["content-type"] = f"multipart/form-data; boundary={boundary}"
+
+    resp = requests.post(OST_UPLOAD_URL, headers=headers, data=body)
+    result = resp.json()
+    print(f"[DEBUG] OST upload response: {json.dumps(result, ensure_ascii=False)}")
+
+    if result.get("code") != 0:
+        raise Exception(f"上传失败: {result.get('message', '未知错误')}")
+
+    return result["data"]["url"], ext
+
+
+def ost_create_task(app_id, api_key, api_secret, audio_url, audio_format, duration_ms=0):
+    """极速版：创建转写任务"""
+    if audio_format in ("wav", "pcm"):
+        encoding = "raw"
+    elif audio_format == "mp3":
+        encoding = "lame"
+    else:
+        encoding = "raw"
+
+    request_id = str(uuid.uuid4())
+    body = {
+        "common": {"app_id": app_id},
+        "business": {
+            "request_id": request_id,
+            "language": "zh_cn",
+            "domain": "pro_ost_ed",
+            "accent": "mandarin",
+            "vspp_on": 1,
+            "speaker_num": 0,
+            "duration": duration_ms // 1000 if duration_ms else 0,
+        },
+        "data": {
+            "audio_url": audio_url,
+            "audio_src": "http",
+            "format": "16k",
+            "encoding": encoding,
+        },
+    }
+
+    body_bytes = json.dumps(body).encode("utf-8")
+    headers = ost_build_auth(OST_CREATE_URL, "POST", api_key, api_secret, body_bytes)
+    headers["content-type"] = "application/json"
+
+    resp = requests.post(OST_CREATE_URL, headers=headers, data=body_bytes)
+    result = resp.json()
+    print(f"[DEBUG] OST create task response: {json.dumps(result, ensure_ascii=False)}")
+
+    if result.get("code") != 0:
+        raise Exception(f"创建任务失败: {result.get('message', '未知错误')}")
+
+    return result["data"]["task_id"]
+
+
+def ost_query_task(app_id, api_key, api_secret, ost_task_id):
+    """极速版：查询任务状态，返回 (status, error_msg, result_data)"""
+    body = {
+        "common": {"app_id": app_id},
+        "business": {"task_id": ost_task_id},
+    }
+
+    body_bytes = json.dumps(body).encode("utf-8")
+    headers = ost_build_auth(OST_QUERY_URL, "POST", api_key, api_secret, body_bytes)
+    headers["content-type"] = "application/json"
+
+    resp = requests.post(OST_QUERY_URL, headers=headers, data=body_bytes, timeout=30)
+    result = resp.json()
+
+    if result.get("code") != 0:
+        return "failed", result.get("message", "查询失败"), None
+
+    data = result.get("data", {})
+    task_status = str(data.get("task_status", "1"))
+
+    if task_status in ("3", "4"):
+        return "done", None, data.get("result", {})
+    elif task_status == "2":
+        return "processing", None, None
+    else:
+        return "pending", None, None
+
+
 # ========== 后台轮询线程 ==========
 
 def poll_task(task_id, api_key, api_secret, order_id):
@@ -269,6 +444,51 @@ def poll_task(task_id, api_key, api_secret, order_id):
             pass
 
         time.sleep(15)
+
+
+def poll_task_ost(task_id, app_id, api_key, api_secret, ost_task_id):
+    """极速版：后台轮询转写结果"""
+    start = time.time()
+    while True:
+        try:
+            status, error_msg, result_data = ost_query_task(
+                app_id, api_key, api_secret, ost_task_id
+            )
+            elapsed = int(time.time() - start)
+
+            with tasks_lock:
+                if task_id not in tasks:
+                    break
+                tasks[task_id]["elapsed"] = elapsed
+
+                if status == "done":
+                    lattice = result_data.get("lattice", [])
+                    segments = parse_result(
+                        {"orderResult": json.dumps({"lattice": lattice})}
+                    )
+                    tasks[task_id]["status"] = "done"
+                    tasks[task_id]["segments"] = segments
+                    raw_path = os.path.join(RESULT_DIR, f"{task_id}_raw.json")
+                    with open(raw_path, "w", encoding="utf-8") as df:
+                        json.dump(result_data, df, ensure_ascii=False, indent=2)
+                    save_result(task_id, tasks[task_id])
+                    break
+                elif status == "failed":
+                    tasks[task_id]["status"] = "failed"
+                    tasks[task_id]["error"] = error_msg or "转写失败"
+                    break
+                elif status == "processing":
+                    tasks[task_id]["status_text"] = "处理中..."
+                else:
+                    tasks[task_id]["status_text"] = "已创建，等待处理"
+
+        except Exception as e:
+            elapsed = int(time.time() - start)
+            with tasks_lock:
+                if task_id in tasks:
+                    tasks[task_id]["elapsed"] = elapsed
+
+        time.sleep(5)
 
 
 def save_result(task_id, task_data):
@@ -393,6 +613,7 @@ def index():
 @login_required
 def api_upload():
     """上传音频并启动转写"""
+    provider = request.form.get("provider", "xfyun")
     app_id = request.form.get("app_id", "").strip()
     api_key = request.form.get("api_key", "").strip()
     api_secret = request.form.get("api_secret", "").strip()
@@ -411,7 +632,19 @@ def api_upload():
     file.save(filepath)
 
     try:
-        order_id, estimate_time = upload_audio(app_id, api_key, api_secret, filepath)
+        if provider == "xfyun_speed":
+            duration_ms = get_audio_duration_ms(filepath)
+            audio_url, audio_fmt = ost_upload_file(
+                app_id, api_key, api_secret, filepath
+            )
+            ost_task_id = ost_create_task(
+                app_id, api_key, api_secret, audio_url, audio_fmt, duration_ms
+            )
+            estimate_time = max(20000, duration_ms * 20)
+        else:
+            order_id, estimate_time = upload_audio(
+                app_id, api_key, api_secret, filepath
+            )
     except Exception as e:
         os.remove(filepath)
         return jsonify({"error": str(e)}), 500
@@ -419,26 +652,31 @@ def api_upload():
     with tasks_lock:
         tasks[task_id] = {
             "task_id": task_id,
-            "order_id": order_id,
+            "order_id": ost_task_id if provider == "xfyun_speed" else order_id,
             "filename": file.filename,
             "status": "processing",
             "status_text": "已上传，等待处理",
             "estimate_time": estimate_time,
             "elapsed": 0,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "api_key": api_key,
-            "api_secret": api_secret,
+            "provider": provider,
         }
 
-    # 启动后台轮询线程
-    t = threading.Thread(
-        target=poll_task,
-        args=(task_id, api_key, api_secret, order_id),
-        daemon=True,
-    )
+    if provider == "xfyun_speed":
+        t = threading.Thread(
+            target=poll_task_ost,
+            args=(task_id, app_id, api_key, api_secret, ost_task_id),
+            daemon=True,
+        )
+    else:
+        t = threading.Thread(
+            target=poll_task,
+            args=(task_id, api_key, api_secret, order_id),
+            daemon=True,
+        )
     t.start()
 
-    return jsonify({"task_id": task_id, "order_id": order_id})
+    return jsonify({"task_id": task_id, "estimate_time": estimate_time})
 
 
 @app.route("/api/status/<task_id>")
