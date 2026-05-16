@@ -212,13 +212,13 @@
             // 隐藏所有服务商字段
             document.querySelectorAll('[id$="Fields"]').forEach(el => el.style.display = 'none');
             // 显示选中的服务商字段
-            const cfg = PROVIDERS[provider];
+            const cfg = PROVIDERS[newProvider];
             if (cfg && cfg.fields) {
                 const fieldsEl = document.getElementById(cfg.fields);
                 if (fieldsEl) fieldsEl.style.display = '';
             }
             // 更新帮助面板内容
-            updateHelpContent(provider);
+            updateHelpContent(newProvider);
         }
 
         function updateHelpContent(provider) {
