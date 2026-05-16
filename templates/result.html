@@ -24,6 +24,14 @@
         .card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
         .export-btn { transition: all 0.15s ease; }
         .export-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        /* 音频播放器 */
+        .audio-player input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; outline: none; cursor: pointer; }
+        .audio-player input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #00965E; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.15); cursor: pointer; margin-top: -1px; }
+        .audio-player input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; }
+        .audio-player input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #00965E; border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.15); cursor: pointer; }
+        .audio-player input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: #e5e7eb; }
+        #progressRange { background: linear-gradient(to right, #00965E var(--progress, 0%), #e5e7eb var(--progress, 0%)); }
+        #volumeRange { width: 60px; background: linear-gradient(to right, #00965E var(--vol, 100%), #e5e7eb var(--vol, 100%)); }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -67,6 +75,28 @@
             {% endif %}
         </div>
 
+        {% if has_audio %}
+        <!-- 音频播放器 -->
+        <div class="card bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4 audio-player">
+            <audio id="audioEl" preload="metadata" src="/api/audio/{{ task_id }}"></audio>
+            <div class="flex items-center gap-3">
+                <button id="playBtn" onclick="togglePlay()" class="flex-shrink-0 w-9 h-9 rounded-full bg-brand-500 hover:bg-brand-600 text-white flex items-center justify-center transition-colors shadow-sm">
+                    <svg id="playIcon" width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg>
+                    <svg id="pauseIcon" width="14" height="14" viewBox="0 0 24 24" fill="white" class="hidden"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                </button>
+                <div class="flex-1 min-w-0">
+                    <input type="range" id="progressRange" min="0" max="1000" value="0" class="w-full" oninput="seekAudio(this.value)">
+                </div>
+                <span id="timeDisplay" class="text-[11px] text-gray-400 tabular-nums flex-shrink-0 w-20 text-right">0:00 / 0:00</span>
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                    <input type="range" id="volumeRange" min="0" max="100" value="100" class="hidden md:block" oninput="setVolume(this.value)">
+                </div>
+                <button id="speedBtn" onclick="cycleSpeed()" class="text-[11px] text-gray-400 border border-gray-200 rounded px-1.5 py-0.5 hover:text-gray-600 hover:border-gray-300 transition-colors flex-shrink-0">1x</button>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- 说话人编辑 -->
         <div class="card bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
             <h3 class="text-[12px] font-semibold text-gray-500 uppercase tracking-wider mb-3">说话人名称</h3>
@@ -101,6 +131,70 @@
 
     <script>
         const taskId = "{{ task_id }}";
+        const hasAudio = {{ 'true' if has_audio else 'false' }};
+
+        {% if has_audio %}
+        const audio = document.getElementById('audioEl');
+        const playBtn = document.getElementById('playBtn');
+        const playIcon = document.getElementById('playIcon');
+        const pauseIcon = document.getElementById('pauseIcon');
+        const progressRange = document.getElementById('progressRange');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const volumeRange = document.getElementById('volumeRange');
+        const speedBtn = document.getElementById('speedBtn');
+
+        function formatTime(s) {
+            if (isNaN(s)) return '0:00';
+            const m = Math.floor(s / 60);
+            const sec = Math.floor(s % 60);
+            return m + ':' + String(sec).padStart(2, '0');
+        }
+
+        function togglePlay() {
+            if (audio.paused) { audio.play(); } else { audio.pause(); }
+        }
+
+        audio.addEventListener('play', () => {
+            playIcon.classList.add('hidden');
+            pauseIcon.classList.remove('hidden');
+        });
+        audio.addEventListener('pause', () => {
+            playIcon.classList.remove('hidden');
+            pauseIcon.classList.add('hidden');
+        });
+        audio.addEventListener('timeupdate', () => {
+            if (audio.duration) {
+                const pct = (audio.currentTime / audio.duration) * 1000;
+                progressRange.value = pct;
+                progressRange.style.setProperty('--progress', (pct / 10) + '%');
+                timeDisplay.textContent = formatTime(audio.currentTime) + ' / ' + formatTime(audio.duration);
+            }
+        });
+        audio.addEventListener('ended', () => {
+            playIcon.classList.remove('hidden');
+            pauseIcon.classList.add('hidden');
+        });
+
+        function seekAudio(val) {
+            if (audio.duration) {
+                audio.currentTime = (val / 1000) * audio.duration;
+                progressRange.style.setProperty('--progress', (val / 10) + '%');
+            }
+        }
+
+        function setVolume(val) {
+            audio.volume = val / 100;
+            volumeRange.style.setProperty('--vol', val + '%');
+        }
+
+        const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+        let speedIdx = 2;
+        function cycleSpeed() {
+            speedIdx = (speedIdx + 1) % speeds.length;
+            audio.playbackRate = speeds[speedIdx];
+            speedBtn.textContent = speeds[speedIdx] + 'x';
+        }
+        {% endif %}
 
         document.querySelectorAll('.speaker-input').forEach(input => {
             input.addEventListener('input', () => {

@@ -788,7 +788,35 @@ def result_page(task_id):
     # 提取说话人列表
     speakers = sorted(set(str(rl) for rl, _ in data.get("segments", [])))
     single_speaker = len(speakers) <= 1 and len(data.get("segments", [])) > 0
-    return render_template("result.html", task=data, speakers=speakers, task_id=task_id, single_speaker=single_speaker)
+
+    # 查找对应的音频文件
+    audio_ext = None
+    for fname in os.listdir(UPLOAD_DIR):
+        if fname.startswith(task_id + "."):
+            audio_ext = os.path.splitext(fname)[1]
+            break
+
+    return render_template(
+        "result.html",
+        task=data,
+        speakers=speakers,
+        task_id=task_id,
+        single_speaker=single_speaker,
+        has_audio=audio_ext is not None,
+    )
+
+
+@app.route("/api/audio/<task_id>")
+@login_required
+def api_audio(task_id):
+    """提供上传的音频文件"""
+    for fname in os.listdir(UPLOAD_DIR):
+        if fname.startswith(task_id + "."):
+            return send_file(
+                os.path.join(UPLOAD_DIR, fname),
+                conditional=True,
+            )
+    return jsonify({"error": "音频文件不存在"}), 404
 
 
 @app.route("/api/result/<task_id>")

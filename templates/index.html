@@ -298,7 +298,7 @@
 
         let pollTimer = null;
 
-        async function startUpload() {
+        function startUpload() {
             const appId = document.getElementById('appId').value.trim();
             const apiKey = document.getElementById('apiKey').value.trim();
             const apiSecret = document.getElementById('apiSecret').value.trim();
@@ -325,28 +325,54 @@
             document.getElementById('progressArea').classList.remove('hidden');
             document.getElementById('resultLink').classList.add('hidden');
             document.getElementById('errorArea').classList.add('hidden');
-            document.getElementById('statusText').textContent = '上传中...';
+            document.getElementById('statusText').textContent = '上传中 0%';
+            document.getElementById('progressFill').style.width = '0%';
 
-            try {
-                const resp = await fetch('/api/upload', { method: 'POST', body: formData });
-                const data = await resp.json();
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload');
 
-                if (data.error) {
-                    showError(data.error);
-                    document.getElementById('uploadBtn').disabled = false;
-                    return;
+            xhr.upload.onprogress = function(e) {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    document.getElementById('statusText').textContent = '上传中 ' + pct + '%';
+                    document.getElementById('progressFill').style.width = pct + '%';
+                    document.getElementById('elapsedText').textContent = formatBytes(e.loaded) + ' / ' + formatBytes(e.total);
                 }
+            };
 
-                document.getElementById('statusText').textContent = '已上传，转写处理中...';
-                // 记录到 localStorage
-                const tasks = JSON.parse(localStorage.getItem('transcribe_tasks') || '[]');
-                tasks.unshift({ tid: data.task_id, name: selectedFile.name, time: new Date().toLocaleString() });
-                localStorage.setItem('transcribe_tasks', JSON.stringify(tasks));
-                pollStatus(data.task_id, data.estimate_time || 300000);
-            } catch (e) {
-                showError('上传失败: ' + e.message);
+            xhr.onload = function() {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    if (data.error) {
+                        showError(data.error);
+                        document.getElementById('uploadBtn').disabled = false;
+                        return;
+                    }
+                    document.getElementById('statusText').textContent = '已上传，转写处理中...';
+                    document.getElementById('progressFill').style.width = '0%';
+                    document.getElementById('elapsedText').textContent = '';
+                    const tasks = JSON.parse(localStorage.getItem('transcribe_tasks') || '[]');
+                    tasks.unshift({ tid: data.task_id, name: selectedFile.name, time: new Date().toLocaleString() });
+                    localStorage.setItem('transcribe_tasks', JSON.stringify(tasks));
+                    pollStatus(data.task_id, data.estimate_time || 300000);
+                } catch (e) {
+                    showError('解析响应失败');
+                    document.getElementById('uploadBtn').disabled = false;
+                }
+            };
+
+            xhr.onerror = function() {
+                showError('上传失败: 网络错误');
                 document.getElementById('uploadBtn').disabled = false;
-            }
+            };
+
+            xhr.send(formData);
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
         }
 
         function pollStatus(taskId, estimateTime) {
