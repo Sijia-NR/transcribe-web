@@ -142,10 +142,12 @@
 
         // 恢复名字
         const savedName = localStorage.getItem('share_user_name') || '';
-        document.getElementById('inputName').value = savedName;
+        const nameInput = document.getElementById('inputName');
+        if (nameInput) nameInput.value = savedName;
 
         // 文件选择
-        document.getElementById('inputFile').addEventListener('change', function() {
+        const fileInput = document.getElementById('inputFile');
+        if (fileInput) fileInput.addEventListener('change', function() {
             const label = document.getElementById('fileLabel');
             label.textContent = this.files.length ? this.files[0].name : '点击选择文件';
             label.classList.toggle('text-brand-600', this.files.length > 0);
