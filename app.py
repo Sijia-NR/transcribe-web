@@ -818,29 +818,57 @@ MIME_TYPES = {
     ".wma": "audio/x-ms-wma",
 }
 
+# 浏览器可直接播放的格式
+BROWSER_NATIVE = {".mp3", ".wav", ".ogg"}
+
 
 @app.route("/api/audio/<task_id>")
 @login_required
 def api_audio(task_id):
-    """提供上传的音频文件"""
-    # 优先返回原始格式，m4a/wav/ogg/flac 浏览器都能播放
+    """提供上传的音频文件，非浏览器友好格式实时转码为 mp3"""
+    import subprocess
+    import io as _io
+
     best = None
     for fname in os.listdir(UPLOAD_DIR):
         if fname.startswith(task_id + "."):
             ext = os.path.splitext(fname)[1].lower()
-            # 优先选择原始文件（非 ffmpeg 转换的 .wav）
-            if best is None or (not best.endswith(".wav") and ext != ".wav"):
+            # 优先选择浏览器原生支持的格式
+            if best is None:
                 best = fname
-            if ext in (".mp3", ".m4a", ".ogg"):
+            if ext in BROWSER_NATIVE:
+                best = fname
                 break
+
     if not best:
         return jsonify({"error": "音频文件不存在"}), 404
-    mimetype = MIME_TYPES.get(os.path.splitext(best)[1].lower(), "application/octet-stream")
-    return send_file(
-        os.path.join(UPLOAD_DIR, best),
-        mimetype=mimetype,
-        conditional=True,
+
+    filepath = os.path.join(UPLOAD_DIR, best)
+    ext = os.path.splitext(best)[1].lower()
+
+    if ext in BROWSER_NATIVE:
+        mimetype = MIME_TYPES.get(ext, "application/octet-stream")
+        return send_file(filepath, mimetype=mimetype, conditional=True)
+
+    # 非浏览器友好格式，用 ffmpeg 实时转码为 mp3
+    proc = subprocess.Popen(
+        ["ffmpeg", "-i", filepath, "-f", "mp3", "-vn", "-ab", "128k", "-"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
     )
+
+    def generate():
+        try:
+            while True:
+                chunk = proc.stdout.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            proc.kill()
+            proc.wait()
+
+    return app.response_class(generate(), mimetype="audio/mpeg")
 
 
 @app.route("/api/result/<task_id>")
