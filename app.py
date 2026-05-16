@@ -289,31 +289,39 @@ def ost_upload_file(app_id, api_key, api_secret, filepath):
 
     request_id = str(uuid.uuid4())
     file_name = os.path.basename(filepath)
-
-    with open(filepath, "rb") as f:
-        file_content = f.read()
+    file_size = os.path.getsize(filepath)
 
     boundary = uuid.uuid4().hex
-    body = b""
-    body += (
+
+    # 分段构建 multipart body，避免大文件一次性读入内存
+    preamble = (
         f'--{boundary}\r\nContent-Disposition: form-data; name="request_id"'
         f"\r\n\r\n{request_id}\r\n"
-    ).encode()
-    body += (
         f'--{boundary}\r\nContent-Disposition: form-data; name="app_id"'
         f"\r\n\r\n{app_id}\r\n"
-    ).encode()
-    body += (
         f'--{boundary}\r\nContent-Disposition: form-data; name="data"; '
         f'filename="{file_name}"\r\nContent-Type: application/octet-stream\r\n\r\n'
     ).encode()
-    body += file_content
-    body += f"\r\n--{boundary}--\r\n".encode()
+    epilogue = f"\r\n--{boundary}--\r\n".encode()
 
-    headers = ost_build_auth(OST_UPLOAD_URL, "POST", api_key, api_secret, body, use_empty_digest=True)
+    def body_generator():
+        yield preamble
+        with open(filepath, "rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                yield chunk
+        yield epilogue
+
+    total_length = len(preamble) + file_size + len(epilogue)
+
+    # digest 用空字符串（官方 demo 行为），不需要读 body
+    headers = ost_build_auth(OST_UPLOAD_URL, "POST", api_key, api_secret, b"", use_empty_digest=True)
     headers["content-type"] = f"multipart/form-data; boundary={boundary}"
+    headers["content-length"] = str(total_length)
 
-    resp = requests.post(OST_UPLOAD_URL, headers=headers, data=body)
+    resp = requests.post(OST_UPLOAD_URL, headers=headers, data=body_generator(), timeout=(30, 600))
     result = resp.json()
     print(f"[DEBUG] OST upload response: {json.dumps(result, ensure_ascii=False)}")
 
