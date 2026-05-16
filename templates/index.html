@@ -193,10 +193,21 @@
             },
         };
 
+        let currentProvider = 'xfyun';
+
         function onProviderChange(skipSave) {
-            const provider = document.getElementById('provider').value;
-            // 切换服务商时保存当前凭证，加载新服务商的凭证
-            if (!skipSave) saveCreds();
+            const newProvider = document.getElementById('provider').value;
+            // 切换服务商时：用旧 provider 的 key 保存当前表单值，再用新 provider 的 key 加载
+            if (!skipSave && newProvider !== currentProvider) {
+                const oldKeys = PROVIDERS[currentProvider]?.credKeys;
+                if (oldKeys && document.getElementById('saveCreds').checked) {
+                    for (const [id, key] of Object.entries(oldKeys)) {
+                        localStorage.setItem(key, document.getElementById(id).value);
+                    }
+                }
+            }
+            currentProvider = newProvider;
+            localStorage.setItem('last_provider', newProvider);
             loadCreds();
             // 隐藏所有服务商字段
             document.querySelectorAll('[id$="Fields"]').forEach(el => el.style.display = 'none');
@@ -225,7 +236,15 @@
             `).join('');
         }
 
-        // 初始化：跳过 saveCreds 避免空值覆盖已保存的凭证
+        // 初始化：恢复上次选择的服务商，跳过 saveCreds 避免空值覆盖已保存的凭证
+        (function() {
+            const saved = localStorage.getItem('last_provider');
+            if (saved) {
+                const sel = document.getElementById('provider');
+                const opts = Array.from(sel.options).map(o => o.value);
+                if (opts.includes(saved)) sel.value = saved;
+            }
+        })();
         onProviderChange(true);
 
         function getKeys() {
