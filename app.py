@@ -222,6 +222,9 @@ def parse_result(content):
 # ========== 讯飞极速版 API ==========
 
 OST_UPLOAD_URL = "https://upload-ost-api.xfyun.cn/file/upload"
+OST_MPINIT_URL = "https://upload-ost-api.xfyun.cn/file/mpupload/init"
+OST_MPUPLOAD_URL = "https://upload-ost-api.xfyun.cn/file/mpupload/upload"
+OST_MPCOMPLETE_URL = "https://upload-ost-api.xfyun.cn/file/mpupload/complete"
 OST_CREATE_URL = "https://ost-api.xfyun.cn/v2/ost/pro_create"
 OST_QUERY_URL = "https://ost-api.xfyun.cn/v2/ost/query"
 
@@ -269,6 +272,40 @@ def ost_build_auth(url, method, api_key, api_secret, body_bytes, use_empty_diges
     }
 
 
+def _ost_multipart_upload(url, app_id, api_key, api_secret, filepath, extra_fields=None):
+    """通用 multipart 上传，返回响应 JSON"""
+    request_id = str(uuid.uuid4())
+    file_name = os.path.basename(filepath)
+
+    boundary = uuid.uuid4().hex
+
+    parts = [
+        (f'--{boundary}\r\nContent-Disposition: form-data; name="request_id"'
+         f"\r\n\r\n{request_id}\r\n").encode(),
+        (f'--{boundary}\r\nContent-Disposition: form-data; name="app_id"'
+         f"\r\n\r\n{app_id}\r\n").encode(),
+    ]
+    if extra_fields:
+        for k, v in extra_fields.items():
+            parts.append(
+                (f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"'
+                 f"\r\n\r\n{v}\r\n").encode()
+            )
+    with open(filepath, "rb") as f:
+        file_content = f.read()
+    parts.append(
+        (f'--{boundary}\r\nContent-Disposition: form-data; name="data"; '
+         f'filename="{file_name}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode()
+    )
+    body = b"".join(parts) + file_content + f"\r\n--{boundary}--\r\n".encode()
+
+    headers = ost_build_auth(url, "POST", api_key, api_secret, b"", use_empty_digest=True)
+    headers["content-type"] = f"multipart/form-data; boundary={boundary}"
+
+    resp = requests.post(url, headers=headers, data=body, timeout=(30, 600))
+    return resp.json()
+
+
 def ost_upload_file(app_id, api_key, api_secret, filepath):
     """极速版：上传音频文件，返回 (audio_url, 格式)"""
     ext = os.path.splitext(filepath)[1].lower().lstrip(".")
@@ -287,48 +324,73 @@ def ost_upload_file(app_id, api_key, api_secret, filepath):
             filepath = wav_path
             ext = "wav"
 
-    request_id = str(uuid.uuid4())
-    file_name = os.path.basename(filepath)
     file_size = os.path.getsize(filepath)
 
-    boundary = uuid.uuid4().hex
+    if file_size > 30 * 1024 * 1024:
+        # 大文件走分块上传
+        audio_url = ost_upload_chunks(app_id, api_key, api_secret, filepath)
+        return audio_url, ext
 
-    # 分段构建 multipart body，避免大文件一次性读入内存
-    preamble = (
-        f'--{boundary}\r\nContent-Disposition: form-data; name="request_id"'
-        f"\r\n\r\n{request_id}\r\n"
-        f'--{boundary}\r\nContent-Disposition: form-data; name="app_id"'
-        f"\r\n\r\n{app_id}\r\n"
-        f'--{boundary}\r\nContent-Disposition: form-data; name="data"; '
-        f'filename="{file_name}"\r\nContent-Type: application/octet-stream\r\n\r\n'
-    ).encode()
-    epilogue = f"\r\n--{boundary}--\r\n".encode()
-
-    def body_generator():
-        yield preamble
-        with open(filepath, "rb") as f:
-            while True:
-                chunk = f.read(1024 * 1024)  # 1MB chunks
-                if not chunk:
-                    break
-                yield chunk
-        yield epilogue
-
-    total_length = len(preamble) + file_size + len(epilogue)
-
-    # digest 用空字符串（官方 demo 行为），不需要读 body
-    headers = ost_build_auth(OST_UPLOAD_URL, "POST", api_key, api_secret, b"", use_empty_digest=True)
-    headers["content-type"] = f"multipart/form-data; boundary={boundary}"
-    headers["content-length"] = str(total_length)
-
-    resp = requests.post(OST_UPLOAD_URL, headers=headers, data=body_generator(), timeout=(30, 600))
-    result = resp.json()
+    # 小文件直接上传
+    result = _ost_multipart_upload(OST_UPLOAD_URL, app_id, api_key, api_secret, filepath)
     print(f"[DEBUG] OST upload response: {json.dumps(result, ensure_ascii=False)}")
 
     if result.get("code") != 0:
         raise Exception(f"上传失败: {result.get('message', '未知错误')}")
 
     return result["data"]["url"], ext
+
+
+def ost_upload_chunks(app_id, api_key, api_secret, filepath):
+    """极速版：大文件分块上传（>30M）"""
+    # 1) 初始化分块
+    body = {"request_id": str(uuid.uuid4()), "app_id": app_id}
+    body_bytes = json.dumps(body).encode("utf-8")
+    headers = ost_build_auth(OST_MPINIT_URL, "POST", api_key, api_secret, body_bytes)
+    headers["content-type"] = "application/json"
+    resp = requests.post(OST_MPINIT_URL, headers=headers, data=body_bytes, timeout=30)
+    result = resp.json()
+    print(f"[DEBUG] OST mpinit response: {json.dumps(result, ensure_ascii=False)}")
+    if result.get("code") != 0:
+        raise Exception(f"分块初始化失败: {result.get('message', '未知错误')}")
+    upload_id = result["data"]["upload_id"]
+
+    # 2) 分块上传（每块 10MB）
+    chunk_size = 10 * 1024 * 1024
+    slice_id = 0
+    with open(filepath, "rb") as f:
+        while True:
+            chunk_data = f.read(chunk_size)
+            if not chunk_data:
+                break
+            # 写临时文件用于 multipart 上传
+            tmp_path = filepath + f".part{slice_id}"
+            with open(tmp_path, "wb") as tf:
+                tf.write(chunk_data)
+            try:
+                r = _ost_multipart_upload(
+                    OST_MPUPLOAD_URL, app_id, api_key, api_secret, tmp_path,
+                    extra_fields={"upload_id": upload_id, "slice_id": str(slice_id)},
+                )
+                print(f"[DEBUG] OST chunk {slice_id} response: {json.dumps(r, ensure_ascii=False)}")
+                if r.get("code") != 0:
+                    raise Exception(f"分块上传失败(slice {slice_id}): {r.get('message', '未知错误')}")
+            finally:
+                os.remove(tmp_path)
+            slice_id += 1
+
+    # 3) 完成分块上传
+    body = {"request_id": str(uuid.uuid4()), "app_id": app_id, "upload_id": upload_id}
+    body_bytes = json.dumps(body).encode("utf-8")
+    headers = ost_build_auth(OST_MPCOMPLETE_URL, "POST", api_key, api_secret, body_bytes)
+    headers["content-type"] = "application/json"
+    resp = requests.post(OST_MPCOMPLETE_URL, headers=headers, data=body_bytes, timeout=30)
+    result = resp.json()
+    print(f"[DEBUG] OST mpcomplete response: {json.dumps(result, ensure_ascii=False)}")
+    if result.get("code") != 0:
+        raise Exception(f"分块上传完成失败: {result.get('message', '未知错误')}")
+
+    return result["data"]["url"]
 
 
 def ost_create_task(app_id, api_key, api_secret, audio_url, audio_format, duration_ms=0):
