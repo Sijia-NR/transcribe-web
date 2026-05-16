@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if mode == 'admin' %}共享管理{% else %}资源共享{% endif %} - 录音转写</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: {
+                brand: { 50:'#eef8f3',100:'#d5ede2',200:'#a8dbc6',300:'#6dc4a3',400:'#3aad83',500:'#00965E',600:'#007a4d',700:'#005e3b' }
+            }}}
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; }
+        .card { transition: box-shadow 0.2s ease; }
+        .card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+        .tab-active { color: #00965E; border-bottom: 2px solid #00965E; }
+        .tab-btn { padding-bottom: 8px; cursor: pointer; }
+        .tab-btn:hover { color: #00965E; }
+        /* markdown 渲染样式 */
+        .md-body h1 { font-size: 1.5em; font-weight: 700; margin: 0.5em 0; }
+        .md-body h2 { font-size: 1.3em; font-weight: 600; margin: 0.5em 0; }
+        .md-body h3 { font-size: 1.1em; font-weight: 600; margin: 0.4em 0; }
+        .md-body p { margin: 0.4em 0; }
+        .md-body ul, .md-body ol { padding-left: 1.5em; margin: 0.4em 0; }
+        .md-body a { color: #00965E; text-decoration: underline; }
+        .md-body code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+        .md-body pre { background: #f3f4f6; padding: 0.8em; border-radius: 6px; overflow-x: auto; }
+        .md-body pre code { background: none; padding: 0; }
+        .md-body blockquote { border-left: 3px solid #00965E; padding-left: 0.8em; color: #6b7280; margin: 0.5em 0; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- 导航 -->
+    <nav class="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
+        <div class="max-w-3xl mx-auto px-5 h-14 flex justify-between items-center">
+            <div class="flex items-center gap-2.5">
+                <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center shadow-sm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                </div>
+                <span class="text-[15px] font-semibold text-gray-800">录音转写</span>
+            </div>
+            <div class="flex gap-5 text-[13px]">
+                <a href="/" class="text-gray-400 hover:text-gray-600 transition-colors">上传</a>
+                <a href="/history" class="text-gray-400 hover:text-gray-600 transition-colors">历史</a>
+                <a href="/shares" class="text-brand-600 font-medium">共享</a>
+                <a href="/logout" class="text-gray-400 hover:text-gray-600 transition-colors">退出</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-2xl mx-auto px-5 py-6">
+        <div class="flex items-center justify-between mb-5">
+            <h1 class="text-lg font-bold text-gray-800">
+                {% if mode == 'admin' %}全部共享{% else %}资源共享{% endif %}
+            </h1>
+            {% if mode != 'admin' %}
+            <button onclick="toggleForm()" id="addBtn" class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white text-[13px] font-medium rounded-lg transition-colors">
+                + 提交
+            </button>
+            {% endif %}
+        </div>
+
+        {% if mode != 'admin' %}
+        <!-- 提交表单 -->
+        <div id="formArea" class="hidden card bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-5">
+            <div class="mb-4">
+                <label class="text-[12px] font-semibold text-gray-500 mb-1.5 block">你的名字（选填）</label>
+                <input type="text" id="inputName" placeholder="留空则显示匿名"
+                       class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] outline-none focus:border-brand-500">
+            </div>
+            <div class="mb-4">
+                <label class="text-[12px] font-semibold text-gray-500 mb-1.5 block">标题（选填）</label>
+                <input type="text" id="inputTitle" placeholder="给内容起个标题"
+                       class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] outline-none focus:border-brand-500">
+            </div>
+
+            <!-- Tab 切换：文字 / 文件 -->
+            <div class="flex gap-6 border-b border-gray-100 mb-4">
+                <span class="tab-btn tab-active text-[13px] font-medium" onclick="switchTab('text')" id="tabText">输入文字</span>
+                <span class="tab-btn text-[13px] font-medium text-gray-400" onclick="switchTab('file')" id="tabFile">上传文件</span>
+            </div>
+
+            <!-- 文字输入 -->
+            <div id="textArea" class="mb-4">
+                <textarea id="inputContent" rows="6" placeholder="输入你想分享的内容，支持 Markdown 格式..."
+                          class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-[13px] outline-none focus:border-brand-500 resize-y"></textarea>
+            </div>
+
+            <!-- 文件上传 -->
+            <div id="fileArea" class="hidden mb-4">
+                <label class="block bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-6 text-center cursor-pointer hover:border-brand-400 hover:bg-brand-50 transition-all">
+                    <input type="file" id="inputFile" class="hidden" accept=".pdf,.txt,.html,.htm,.md">
+                    <svg class="mx-auto text-gray-300 mb-2" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <p id="fileLabel" class="text-[13px] text-gray-500">点击选择 PDF / TXT / HTML / MD 文件</p>
+                </label>
+            </div>
+
+            <div class="flex gap-3">
+                <button onclick="submitShare()" class="flex-1 bg-brand-500 hover:bg-brand-600 text-white py-2 rounded-lg text-[13px] font-medium transition-colors">提交</button>
+                <button onclick="toggleForm()" class="px-4 bg-gray-100 hover:bg-gray-200 text-gray-600 py-2 rounded-lg text-[13px] transition-colors">取消</button>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 列表 -->
+        <div id="shareList" class="space-y-3">
+            <p class="text-center text-gray-300 text-[13px] py-10">加载中...</p>
+        </div>
+    </div>
+
+    <!-- 预览弹窗 -->
+    <div id="previewModal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closePreview()">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-shrink-0">
+                <h3 id="previewTitle" class="text-[14px] font-semibold text-gray-800 truncate"></h3>
+                <button onclick="closePreview()" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div id="previewBody" class="p-5 overflow-y-auto flex-1 text-[14px] text-gray-700 leading-relaxed"></div>
+        </div>
+    </div>
+
+    <script>
+        const mode = "{{ mode }}";
+        let userId = localStorage.getItem('share_user_id');
+        if (!userId) {
+            userId = 'u_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('share_user_id', userId);
+        }
+
+        // 恢复名字
+        const savedName = localStorage.getItem('share_user_name') || '';
+        document.getElementById('inputName').value = savedName;
+
+        // 文件选择
+        document.getElementById('inputFile').addEventListener('change', function() {
+            const label = document.getElementById('fileLabel');
+            label.textContent = this.files.length ? this.files[0].name : '点击选择文件';
+            label.classList.toggle('text-brand-600', this.files.length > 0);
+        });
+
+        function toggleForm() {
+            const area = document.getElementById('formArea');
+            area.classList.toggle('hidden');
+            if (!area.classList.contains('hidden')) {
+                document.getElementById('addBtn').textContent = '收起';
+            } else {
+                document.getElementById('addBtn').textContent = '+ 提交';
+            }
+        }
+
+        function switchTab(tab) {
+            document.getElementById('textArea').classList.toggle('hidden', tab !== 'text');
+            document.getElementById('fileArea').classList.toggle('hidden', tab !== 'file');
+            document.getElementById('tabText').classList.toggle('tab-active', tab === 'text');
+            document.getElementById('tabFile').classList.toggle('tab-active', tab === 'file');
+            if (tab === 'text') {
+                document.getElementById('tabText').classList.remove('text-gray-400');
+                document.getElementById('tabFile').classList.add('text-gray-400');
+            } else {
+                document.getElementById('tabFile').classList.remove('text-gray-400');
+                document.getElementById('tabText').classList.add('text-gray-400');
+            }
+        }
+
+        async function submitShare() {
+            const name = document.getElementById('inputName').value.trim();
+            const title = document.getElementById('inputTitle').value.trim();
+            const content = document.getElementById('inputContent').value.trim();
+            const file = document.getElementById('inputFile').files[0];
+
+            if (!content && !file) {
+                alert('请输入文字或上传文件');
+                return;
+            }
+
+            // 保存名字
+            if (name) localStorage.setItem('share_user_name', name);
+
+            const formData = new FormData();
+            formData.append('user_id', userId);
+            formData.append('user_name', name);
+            formData.append('title', title);
+            if (content) formData.append('content', content);
+            if (file) formData.append('file', file);
+
+            const resp = await fetch('/api/shares/upload', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (data.error) { alert(data.error); return; }
+
+            // 清空表单
+            document.getElementById('inputContent').value = '';
+            document.getElementById('inputTitle').value = '';
+            document.getElementById('inputFile').value = '';
+            document.getElementById('fileLabel').textContent = '点击选择 PDF / TXT / HTML / MD 文件';
+            toggleForm();
+            loadList();
+        }
+
+        async function loadList() {
+            const params = new URLSearchParams({ user_id: userId, mode: mode });
+            const resp = await fetch('/api/shares/list?' + params);
+            const items = await resp.json();
+
+            const container = document.getElementById('shareList');
+            if (!items.length) {
+                container.innerHTML = '<p class="text-center text-gray-300 text-[13px] py-10">' +
+                    (mode === 'admin' ? '暂无共享内容' : '还没有提交内容，点击右上角 + 提交') + '</p>';
+                return;
+            }
+
+            container.innerHTML = items.map(item => {
+                const badge = item.type === 'file'
+                    ? '<span class="text-[10px] bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded">' + (item.file_type || '').toUpperCase() + '</span>'
+                    : '<span class="text-[10px] bg-brand-50 text-brand-600 px-1.5 py-0.5 rounded">文字</span>';
+                const nameTag = mode === 'admin' ? '<span class="text-[11px] text-gray-400 ml-2">' + (item.user_name || '匿名') + '</span>' : '';
+                const delBtn = mode !== 'admin'
+                    ? '<button onclick="deleteShare(\'' + item.id + '\')" class="text-[11px] text-red-400 hover:text-red-600 transition-colors">删除</button>'
+                    : '';
+                return `
+                    <div class="card bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1 min-w-0 cursor-pointer" onclick="openPreview('${item.id}')">
+                                <div class="flex items-center gap-2 mb-1">
+                                    ${badge}
+                                    <span class="text-[14px] font-medium text-gray-800 truncate">${escHtml(item.title)}</span>
+                                    ${nameTag}
+                                </div>
+                                <p class="text-[11px] text-gray-400">${item.created_at}${item.filename ? ' · ' + item.filename : ''}</p>
+                            </div>
+                            ${delBtn}
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        async function openPreview(id) {
+            document.getElementById('previewTitle').textContent = '加载中...';
+            document.getElementById('previewBody').innerHTML = '<p class="text-gray-300 text-center py-10">加载中...</p>';
+            document.getElementById('previewModal').classList.remove('hidden');
+
+            const resp = await fetch('/api/shares/content/' + id);
+            const data = await resp.json();
+
+            document.getElementById('previewTitle').textContent = '';
+            const body = document.getElementById('previewBody');
+
+            if (data.type === 'text') {
+                body.innerHTML = '<div class="md-body">' + (typeof marked !== 'undefined' ? marked.parse(data.content) : '<pre>' + escHtml(data.content) + '</pre>') + '</div>';
+            } else if (data.type === 'md') {
+                body.innerHTML = '<div class="md-body">' + (typeof marked !== 'undefined' ? marked.parse(data.content) : '<pre>' + escHtml(data.content) + '</pre>') + '</div>';
+            } else if (data.type === 'html') {
+                body.innerHTML = '<iframe srcdoc="' + escAttr(data.content) + '" class="w-full border-0" style="min-height:400px" sandbox="allow-same-origin"></iframe>';
+            } else if (data.type === 'txt') {
+                body.innerHTML = '<pre class="whitespace-pre-wrap text-[13px]">' + escHtml(data.content) + '</pre>';
+            } else if (data.type === 'pdf') {
+                body.innerHTML = '<embed src="' + data.url + '" type="application/pdf" class="w-full" style="min-height:500px">';
+            }
+        }
+
+        function escAttr(s) {
+            return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        function closePreview() {
+            document.getElementById('previewModal').classList.add('hidden');
+        }
+
+        async function deleteShare(id) {
+            if (!confirm('确定删除？')) return;
+            await fetch('/api/shares/' + id, { method: 'DELETE' });
+            loadList();
+        }
+
+        loadList();
+    </script>
+</body>
+</html>

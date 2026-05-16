@@ -925,6 +925,196 @@ def history_page():
     return render_template("history.html")
 
 
+# ========== 资源共享（独立功能，不影响上面转写逻辑） ==========
+
+SHARES_DIR = os.path.join(BASE_DIR, "shares")
+SHARES_META_DIR = os.path.join(BASE_DIR, "shares_meta")
+os.makedirs(SHARES_DIR, exist_ok=True)
+os.makedirs(SHARES_META_DIR, exist_ok=True)
+
+
+def _load_shares(user_id=None):
+    """加载共享记录，user_id=None 时返回全部"""
+    items = []
+    for fname in os.listdir(SHARES_META_DIR):
+        if not fname.endswith(".json"):
+            continue
+        with open(os.path.join(SHARES_META_DIR, fname), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if user_id and data.get("user_id") != user_id:
+            continue
+        items.append(data)
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return items
+
+
+def _load_one_share(share_id):
+    path = os.path.join(SHARES_META_DIR, f"{share_id}.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.route("/shares")
+@login_required
+def shares_page():
+    """共享列表页（前端根据 user_id 过滤）"""
+    return render_template("shares.html", mode="user")
+
+
+@app.route("/shares/admin")
+@login_required
+def shares_admin_page():
+    """管理页：看全部"""
+    return render_template("shares.html", mode="admin")
+
+
+@app.route("/shares/<share_id>")
+@login_required
+def share_view_page(share_id):
+    """预览页"""
+    meta = _load_one_share(share_id)
+    if not meta:
+        return redirect(url_for("shares_page"))
+    return render_template("share_view.html", meta=meta, share_id=share_id)
+
+
+@app.route("/api/shares/upload", methods=["POST"])
+@login_required
+def api_shares_upload():
+    """提交共享内容：文字或文件"""
+    user_id = request.form.get("user_id", "").strip()
+    user_name = request.form.get("user_name", "").strip()
+    title = request.form.get("title", "").strip()
+    content = request.form.get("content", "").strip()
+
+    if not user_id:
+        return jsonify({"error": "缺少用户标识"}), 400
+
+    share_id = str(uuid.uuid4())[:8]
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    file = request.files.get("file")
+    if file and file.filename:
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in (".pdf", ".txt", ".html", ".htm", ".md"):
+            return jsonify({"error": "不支持的文件格式，支持 PDF/TXT/HTML/MD"}), 400
+        filepath = os.path.join(SHARES_DIR, f"{share_id}{ext}")
+        file.save(filepath)
+        meta = {
+            "id": share_id,
+            "user_id": user_id,
+            "user_name": user_name or "匿名",
+            "type": "file",
+            "file_type": ext.lstrip("."),
+            "title": title or file.filename,
+            "filename": file.filename,
+            "created_at": created_at,
+        }
+    elif content:
+        meta = {
+            "id": share_id,
+            "user_id": user_id,
+            "user_name": user_name or "匿名",
+            "type": "text",
+            "title": title or "无标题",
+            "content": content,
+            "created_at": created_at,
+        }
+    else:
+        return jsonify({"error": "请输入文字或上传文件"}), 400
+
+    meta_path = os.path.join(SHARES_META_DIR, f"{share_id}.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    return jsonify({"ok": True, "id": share_id})
+
+
+@app.route("/api/shares/list")
+@login_required
+def api_shares_list():
+    """获取共享列表"""
+    user_id = request.args.get("user_id", "")
+    mode = request.args.get("mode", "user")
+    if mode == "admin":
+        items = _load_shares()
+    else:
+        items = _load_shares(user_id)
+    return jsonify(items)
+
+
+@app.route("/api/shares/file/<share_id>")
+@login_required
+def api_shares_file(share_id):
+    """获取共享的原始文件"""
+    meta = _load_one_share(share_id)
+    if not meta or meta.get("type") != "file":
+        return jsonify({"error": "文件不存在"}), 404
+    ext = "." + meta.get("file_type", "")
+    filepath = os.path.join(SHARES_DIR, f"{share_id}{ext}")
+    if not os.path.exists(filepath):
+        return jsonify({"error": "文件不存在"}), 404
+    mime = {
+        ".pdf": "application/pdf",
+        ".txt": "text/plain; charset=utf-8",
+        ".html": "text/html; charset=utf-8",
+        ".htm": "text/html; charset=utf-8",
+        ".md": "text/markdown; charset=utf-8",
+    }.get(ext, "application/octet-stream")
+    return send_file(filepath, mimetype=mime)
+
+
+@app.route("/api/shares/content/<share_id>")
+@login_required
+def api_shares_content(share_id):
+    """获取文件内容用于预览（TXT/MD/HTML 返回文本）"""
+    meta = _load_one_share(share_id)
+    if not meta:
+        return jsonify({"error": "不存在"}), 404
+
+    if meta["type"] == "text":
+        return jsonify({"type": "text", "content": meta.get("content", "")})
+
+    ext = meta.get("file_type", "")
+    filepath = os.path.join(SHARES_DIR, f"{share_id}.{ext}")
+    if not os.path.exists(filepath):
+        return jsonify({"error": "文件不存在"}), 404
+
+    if ext == "pdf":
+        return jsonify({"type": "pdf", "url": f"/api/shares/file/{share_id}"})
+
+    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        raw = f.read()
+
+    if ext == "md":
+        return jsonify({"type": "md", "content": raw})
+    elif ext in ("html", "htm"):
+        return jsonify({"type": "html", "content": raw})
+    else:
+        return jsonify({"type": "txt", "content": raw})
+
+
+@app.route("/api/shares/<share_id>", methods=["DELETE"])
+@login_required
+def api_shares_delete(share_id):
+    """删除共享记录"""
+    meta = _load_one_share(share_id)
+    if not meta:
+        return jsonify({"error": "不存在"}), 404
+    # 删除元数据
+    meta_path = os.path.join(SHARES_META_DIR, f"{share_id}.json")
+    os.remove(meta_path)
+    # 删除文件
+    if meta.get("type") == "file":
+        ext = "." + meta.get("file_type", "")
+        filepath = os.path.join(SHARES_DIR, f"{share_id}{ext}")
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
     print(f"录音转写 Web 应用启动")
     print(f"访问地址: http://localhost:{PORT}")

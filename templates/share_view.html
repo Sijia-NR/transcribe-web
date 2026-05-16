@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ meta.title }} - 共享预览</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: {
+                brand: { 50:'#eef8f3',100:'#d5ede2',200:'#a8dbc6',300:'#6dc4a3',400:'#3aad83',500:'#00965E',600:'#007a4d',700:'#005e3b' }
+            }}}
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; }
+        .md-body h1 { font-size: 1.5em; font-weight: 700; margin: 0.5em 0; }
+        .md-body h2 { font-size: 1.3em; font-weight: 600; margin: 0.5em 0; }
+        .md-body h3 { font-size: 1.1em; font-weight: 600; margin: 0.4em 0; }
+        .md-body p { margin: 0.4em 0; }
+        .md-body ul, .md-body ol { padding-left: 1.5em; margin: 0.4em 0; }
+        .md-body a { color: #00965E; text-decoration: underline; }
+        .md-body code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+        .md-body pre { background: #f3f4f6; padding: 0.8em; border-radius: 6px; overflow-x: auto; }
+        .md-body pre code { background: none; padding: 0; }
+        .md-body blockquote { border-left: 3px solid #00965E; padding-left: 0.8em; color: #6b7280; margin: 0.5em 0; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- 导航 -->
+    <nav class="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
+        <div class="max-w-3xl mx-auto px-5 h-14 flex justify-between items-center">
+            <div class="flex items-center gap-2.5">
+                <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center shadow-sm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </div>
+                <span class="text-[15px] font-semibold text-gray-800">录音转写</span>
+            </div>
+            <div class="flex gap-5 text-[13px]">
+                <a href="/" class="text-gray-400 hover:text-gray-600">上传</a>
+                <a href="/shares" class="text-brand-600 font-medium">共享</a>
+                <a href="/logout" class="text-gray-400 hover:text-gray-600">退出</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-2xl mx-auto px-5 py-8">
+        <!-- 信息卡片 -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h1 class="text-[16px] font-semibold text-gray-800">{{ meta.title }}</h1>
+                    <p class="text-[12px] text-gray-400 mt-1">
+                        {{ meta.user_name or '匿名' }} · {{ meta.created_at }}
+                        {% if meta.filename %} · {{ meta.filename }}{% endif %}
+                    </p>
+                </div>
+                <a href="/shares" class="text-[12px] text-brand-600 hover:text-brand-700 font-medium">返回列表</a>
+            </div>
+        </div>
+
+        <!-- 内容区 -->
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+            <div id="contentArea">
+                <p class="text-center text-gray-300 py-10">加载中...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const shareId = "{{ share_id }}";
+
+        async function loadContent() {
+            const resp = await fetch('/api/shares/content/' + shareId);
+            const data = await resp.json();
+            const area = document.getElementById('contentArea');
+
+            if (data.type === 'text') {
+                area.innerHTML = '<div class="md-body">' + (typeof marked !== 'undefined' ? marked.parse(data.content) : '<pre>' + escHtml(data.content) + '</pre>') + '</div>';
+            } else if (data.type === 'md') {
+                area.innerHTML = '<div class="md-body">' + (typeof marked !== 'undefined' ? marked.parse(data.content) : '<pre>' + escHtml(data.content) + '</pre>') + '</div>';
+            } else if (data.type === 'html') {
+                area.innerHTML = '<iframe srcdoc="' + escAttr(data.content) + '" class="w-full border-0" style="min-height:500px" sandbox="allow-same-origin"></iframe>';
+            } else if (data.type === 'txt') {
+                area.innerHTML = '<pre class="whitespace-pre-wrap text-[13px] leading-relaxed">' + escHtml(data.content) + '</pre>';
+            } else if (data.type === 'pdf') {
+                area.innerHTML = '<embed src="' + data.url + '" type="application/pdf" class="w-full" style="min-height:600px">';
+            }
+        }
+
+        function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+        function escAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+        loadContent();
+    </script>
+</body>
+</html>
