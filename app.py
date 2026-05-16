@@ -806,17 +806,41 @@ def result_page(task_id):
     )
 
 
+MIME_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".aac": "audio/aac",
+    ".opus": "audio/opus",
+    ".amr": "audio/amr",
+    ".wma": "audio/x-ms-wma",
+}
+
+
 @app.route("/api/audio/<task_id>")
 @login_required
 def api_audio(task_id):
     """提供上传的音频文件"""
+    # 优先返回原始格式，m4a/wav/ogg/flac 浏览器都能播放
+    best = None
     for fname in os.listdir(UPLOAD_DIR):
         if fname.startswith(task_id + "."):
-            return send_file(
-                os.path.join(UPLOAD_DIR, fname),
-                conditional=True,
-            )
-    return jsonify({"error": "音频文件不存在"}), 404
+            ext = os.path.splitext(fname)[1].lower()
+            # 优先选择原始文件（非 ffmpeg 转换的 .wav）
+            if best is None or (not best.endswith(".wav") and ext != ".wav"):
+                best = fname
+            if ext in (".mp3", ".m4a", ".ogg"):
+                break
+    if not best:
+        return jsonify({"error": "音频文件不存在"}), 404
+    mimetype = MIME_TYPES.get(os.path.splitext(best)[1].lower(), "application/octet-stream")
+    return send_file(
+        os.path.join(UPLOAD_DIR, best),
+        mimetype=mimetype,
+        conditional=True,
+    )
 
 
 @app.route("/api/result/<task_id>")
