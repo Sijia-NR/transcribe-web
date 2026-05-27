@@ -312,22 +312,23 @@ def ost_upload_file(app_id, api_key, api_secret, filepath):
     if ext not in ("wav", "mp3", "pcm"):
         import subprocess
 
-        wav_path = filepath + ".wav"
+        # 非 wav/mp3/pcm 格式转 mp3（体积远小于 wav，极速版支持 lame 编码）
+        mp3_path = filepath + ".mp3"
         subprocess.run(
             [
                 "ffmpeg", "-y", "-i", filepath,
-                "-ar", "16000", "-ac", "1", "-sample_fmt", "s16", wav_path,
+                "-ar", "16000", "-ac", "1", "-b:a", "32k", mp3_path,
             ],
             capture_output=True,
         )
-        if os.path.exists(wav_path):
-            filepath = wav_path
-            ext = "wav"
+        if os.path.exists(mp3_path):
+            filepath = mp3_path
+            ext = "mp3"
 
     file_size = os.path.getsize(filepath)
 
-    if file_size > 500 * 1024 * 1024:
-        # 超大文件走分块上传（>500M）
+    if file_size > 30 * 1024 * 1024:
+        # 大文件走分块上传（直接上传接口约 30MB 上限）
         audio_url = ost_upload_chunks(app_id, api_key, api_secret, filepath)
         return audio_url, ext
 
