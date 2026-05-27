@@ -326,8 +326,8 @@ def ost_upload_file(app_id, api_key, api_secret, filepath):
 
     file_size = os.path.getsize(filepath)
 
-    if file_size > 30 * 1024 * 1024:
-        # 大文件走分块上传
+    if file_size > 500 * 1024 * 1024:
+        # 超大文件走分块上传（>500M）
         audio_url = ost_upload_chunks(app_id, api_key, api_secret, filepath)
         return audio_url, ext
 
