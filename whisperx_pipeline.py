@@ -26,6 +26,7 @@ def process_audio(filepath, tasks_dict, task_id, hf_token=None):
 
     import torch
     import whisperx
+    from whisperx.diarize import DiarizationPipeline
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -63,7 +64,7 @@ def process_audio(filepath, tasks_dict, task_id, hf_token=None):
 
     # ── 阶段 3：说话人识别 ──
     _update_status(tasks_dict, task_id, "正在进行说话人识别...")
-    diarize_model = whisperx.DiarizationPipeline(
+    diarize_model = DiarizationPipeline(
         use_auth_token=hf_token,
         device=device,
     )

@@ -19,7 +19,7 @@ rm -f /tmp/transcribe-web.bundle
 mkdir -p uploads results shares shares_meta hf_cache
 
 # 重建容器
-docker build -t transcribe-web .
+DOCKER_BUILDKIT=1 docker build -t transcribe-web .
 docker stop transcribe-web 2>/dev/null || true
 docker rm transcribe-web 2>/dev/null || true
 docker run -d --name transcribe-web --restart=always \
@@ -32,5 +32,7 @@ docker run -d --name transcribe-web --restart=always \
     -v /data1/allresearchProject/transcribe-web/hf_cache:/root/.cache/huggingface \
     -e APP_PASSWORD=1111iran \
     -e HF_ENDPOINT=https://hf-mirror.com \
-    transcribe-web
+    -e HF_TOKEN=${HF_TOKEN:-} \
+    transcribe-web \
+    python3 app.py
 '

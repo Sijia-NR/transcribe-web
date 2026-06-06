@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -7,11 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install -r requirements.txt
 
-# 先装 whisperx（拉 torch 2.8），再用 cu124 源重装 CUDA 版 torch
-RUN pip3 install --no-cache-dir whisperx
-RUN pip3 install --no-cache-dir --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+# whisperx 会拉 torch 2.8 + CUDA 12.8，与服务器 GPU 兼容，无需从 cu124 源重装
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install whisperx
 
 COPY . .
 
