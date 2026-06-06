@@ -1,11 +1,53 @@
 """WhisperX 本地 GPU 转写管线
 
-使用 faster-whisper (large-v3) + pyannote/speaker-diarization-3.1
+使用 faster-whisper (large-v3) + pyannote/speaker-diarization-community-1
 通过 HF_ENDPOINT=https://hf-mirror.com 下载模型（国内镜像）
+模型缓存在全局变量中，避免每次请求重新加载。
 """
 
 import os
 import gc
+
+# ── 全局模型缓存（只加载一次，常驻 GPU 显存） ──
+_asr_model = None
+_asr_device = None
+_align_cache = {}       # language -> (align_model, metadata)
+_diarize_model = None
+
+
+def _get_device():
+    import torch
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _get_asr_model(device):
+    global _asr_model, _asr_device
+    if _asr_model is None:
+        import whisperx
+        _asr_model = whisperx.load_model(
+            "large-v3", device=device, compute_type="int8", language=None,
+        )
+        _asr_device = device
+    return _asr_model
+
+
+def _get_align_model(language, device):
+    if language in _align_cache:
+        return _align_cache[language]
+    import whisperx
+    align_model, metadata = whisperx.load_align_model(
+        language_code=language, device=device,
+    )
+    _align_cache[language] = (align_model, metadata)
+    return align_model, metadata
+
+
+def _get_diarize_model(device, hf_token):
+    global _diarize_model
+    if _diarize_model is None:
+        from whisperx.diarize import DiarizationPipeline
+        _diarize_model = DiarizationPipeline(token=hf_token, device=device)
+    return _diarize_model
 
 
 def process_audio(filepath, tasks_dict, task_id, hf_token=None):
@@ -26,53 +68,42 @@ def process_audio(filepath, tasks_dict, task_id, hf_token=None):
 
     import torch
     import whisperx
-    from whisperx.diarize import DiarizationPipeline
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _get_device()
 
     # ── 阶段 1：ASR ──
-    _update_status(tasks_dict, task_id, "正在加载 Whisper 模型...")
-    model = whisperx.load_model(
-        "large-v3",
-        device=device,
-        compute_type="int8",
-        language=None,
-    )
+    if _asr_model is None:
+        _update_status(tasks_dict, task_id, "正在加载 Whisper 模型（首次较慢）...")
+    else:
+        _update_status(tasks_dict, task_id, "正在转写音频...")
 
-    _update_status(tasks_dict, task_id, "正在转写音频...")
+    model = _get_asr_model(device)
     audio = whisperx.load_audio(filepath)
     result = model.transcribe(audio, batch_size=8)
 
     language = result.get("language", "zh")
     segments_raw = result.get("segments", [])
 
-    del model
-    gc.collect()
-    torch.cuda.empty_cache()
-
     if not segments_raw:
         return []
 
     # ── 阶段 2：对齐 ──
-    _update_status(tasks_dict, task_id, "正在对齐时间戳...")
-    align_model, metadata = whisperx.load_align_model(language_code=language, device=device)
+    if language not in _align_cache:
+        _update_status(tasks_dict, task_id, "正在加载对齐模型...")
+    else:
+        _update_status(tasks_dict, task_id, "正在对齐时间戳...")
+
+    align_model, metadata = _get_align_model(language, device)
     result = whisperx.align(segments_raw, align_model, metadata, audio, device)
 
-    del align_model
-    gc.collect()
-    torch.cuda.empty_cache()
-
     # ── 阶段 3：说话人识别 ──
-    _update_status(tasks_dict, task_id, "正在进行说话人识别...")
-    diarize_model = DiarizationPipeline(
-        token=hf_token,
-        device=device,
-    )
-    diarize_segments = diarize_model(audio)
+    if _diarize_model is None:
+        _update_status(tasks_dict, task_id, "正在加载说话人识别模型...")
+    else:
+        _update_status(tasks_dict, task_id, "正在进行说话人识别...")
 
-    del diarize_model
-    gc.collect()
-    torch.cuda.empty_cache()
+    diarize_model = _get_diarize_model(device, hf_token)
+    diarize_segments = diarize_model(audio)
 
     result = whisperx.assign_word_speakers(diarize_segments, result)
 
@@ -80,7 +111,6 @@ def process_audio(filepath, tasks_dict, task_id, hf_token=None):
     segments = []
     for seg in result.get("segments", []):
         speaker = seg.get("speaker", "SPEAKER_00")
-        # SPEAKER_00 → 1, SPEAKER_01 → 2, ...
         speaker_num = str(int(speaker.replace("SPEAKER_", "")) + 1)
         text = seg.get("text", "").strip()
         if text:
@@ -90,7 +120,7 @@ def process_audio(filepath, tasks_dict, task_id, hf_token=None):
     merged = []
     for rl, text in segments:
         if merged and merged[-1][0] == rl:
-            merged[-1] = (rl, merged[-1][1] + text)
+            merged[-1] = (rl, merged[-1][1] + " " + text)
         else:
             merged.append((rl, text))
 
