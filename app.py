@@ -562,6 +562,31 @@ def poll_task_ost(task_id, app_id, api_key, api_secret, ost_task_id):
         time.sleep(5)
 
 
+def process_whisperx_task(task_id, filepath, hf_token=None):
+    """WhisperX 本地 GPU 转写后台线程"""
+    start = time.time()
+    try:
+        from whisperx_pipeline import process_audio
+
+        segments = process_audio(filepath, tasks, task_id, hf_token)
+        elapsed = int(time.time() - start)
+
+        with tasks_lock:
+            if task_id not in tasks:
+                return
+            tasks[task_id]["elapsed"] = elapsed
+            tasks[task_id]["status"] = "done"
+            tasks[task_id]["segments"] = segments
+            save_result(task_id, tasks[task_id])
+    except Exception as e:
+        elapsed = int(time.time() - start)
+        with tasks_lock:
+            if task_id in tasks:
+                tasks[task_id]["elapsed"] = elapsed
+                tasks[task_id]["status"] = "failed"
+                tasks[task_id]["error"] = str(e)
+
+
 def save_result(task_id, task_data):
     """保存结果到文件"""
     filepath = os.path.join(RESULT_DIR, f"{task_id}.json")
@@ -688,8 +713,9 @@ def api_upload():
     app_id = request.form.get("app_id", "").strip()
     api_key = request.form.get("api_key", "").strip()
     api_secret = request.form.get("api_secret", "").strip()
+    hf_token = request.form.get("hf_token", "").strip() or os.environ.get("HF_TOKEN", "")
 
-    if not all([app_id, api_key, api_secret]):
+    if provider != "whisperx" and not all([app_id, api_key, api_secret]):
         return jsonify({"error": "请填写完整的讯飞认证信息"}), 400
 
     file = request.files.get("file")
@@ -703,7 +729,10 @@ def api_upload():
     file.save(filepath)
 
     try:
-        if provider == "xfyun_speed":
+        if provider == "whisperx":
+            duration_ms = get_audio_duration_ms(filepath)
+            estimate_time = max(30000, duration_ms * 2)
+        elif provider == "xfyun_speed":
             duration_ms = get_audio_duration_ms(filepath)
             audio_url, audio_fmt = ost_upload_file(
                 app_id, api_key, api_secret, filepath
@@ -723,7 +752,6 @@ def api_upload():
     with tasks_lock:
         tasks[task_id] = {
             "task_id": task_id,
-            "order_id": ost_task_id if provider == "xfyun_speed" else order_id,
             "filename": file.filename,
             "status": "processing",
             "status_text": "已上传，等待处理",
@@ -732,8 +760,20 @@ def api_upload():
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "provider": provider,
         }
+        if provider == "whisperx":
+            tasks[task_id]["order_id"] = task_id
+        elif provider == "xfyun_speed":
+            tasks[task_id]["order_id"] = ost_task_id
+        else:
+            tasks[task_id]["order_id"] = order_id
 
-    if provider == "xfyun_speed":
+    if provider == "whisperx":
+        t = threading.Thread(
+            target=process_whisperx_task,
+            args=(task_id, filepath, hf_token),
+            daemon=True,
+        )
+    elif provider == "xfyun_speed":
         t = threading.Thread(
             target=poll_task_ost,
             args=(task_id, app_id, api_key, api_secret, ost_task_id),
