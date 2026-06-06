@@ -65,7 +65,7 @@ def process_audio(filepath, tasks_dict, task_id, hf_token=None):
     # ── 阶段 3：说话人识别 ──
     _update_status(tasks_dict, task_id, "正在进行说话人识别...")
     diarize_model = DiarizationPipeline(
-        use_auth_token=hf_token,
+        token=hf_token,
         device=device,
     )
     diarize_segments = diarize_model(audio)
